@@ -18,6 +18,7 @@ package controllers
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strconv"
 	"strings"
@@ -70,6 +71,11 @@ const (
 	monLabelKey                  = "app"
 	monLabelValue                = "managed-ocs"
 	rookConfigMapName            = "rook-ceph-operator-config"
+	serviceMonitorName           = "federate-in-cluster"
+	openshiftMonitoringNamespace = "openshift-monitoring"
+	grafanaDataSourceSecretName  = "grafana-datasources"
+	grafanaDataSourceSecretKey   = "prometheus.yaml"
+	federateSecretName           = "federate-basic-auth"
 )
 
 // ManagedOCSReconciler reconciles a ManagedOCS object
@@ -93,9 +99,11 @@ type ManagedOCSReconciler struct {
 	prometheus               *promv1.Prometheus
 	dmsRule                  *promv1.PrometheusRule
 	alertmanager             *promv1.Alertmanager
+	serviceMonitor           *promv1.ServiceMonitor
 	pagerdutySecret          *corev1.Secret
 	deadMansSnitchSecret     *corev1.Secret
 	alertmanagerConfigSecret *corev1.Secret
+	federateSecret           *corev1.Secret
 	namespace                string
 	reconcileStrategy        v1.ReconcileStrategy
 }
@@ -107,12 +115,13 @@ type ManagedOCSReconciler struct {
 // +kubebuilder:rbac:groups=ocs.openshift.io,namespace=system,resources=ocsinitializations,verbs=get;list;watch;update;patch
 // +kubebuilder:rbac:groups="monitoring.coreos.com",namespace=system,resources={alertmanagers,prometheuses},verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="monitoring.coreos.com",namespace=system,resources=prometheusrules,verbs=get;list;watch;create;update;patch
-// +kubebuilder:rbac:groups="monitoring.coreos.com",namespace=system,resources={podmonitors,servicemonitors},verbs=get;list;watch;update;patch
+// +kubebuilder:rbac:groups="monitoring.coreos.com",namespace=system,resources=podmonitors,verbs=get;list;watch;update;patch
+// +kubebuilder:rbac:groups="monitoring.coreos.com",namespace=system,resources=servicemonitors,verbs=get;list;watch;update;patch;create;delete
 // +kubebuilder:rbac:groups="",namespace=system,resources=secrets,verbs=create;get;list;watch;update
 // +kubebuilder:rbac:groups=operators.coreos.com,namespace=system,resources=subscriptions,verbs=get;list;watch;delete
 // +kubebuilder:rbac:groups=operators.coreos.com,namespace=system,resources=clusterserviceversions,verbs=get;list;watch;delete;update;patch
 // +kubebuilder:rbac:groups="apps",namespace=system,resources=statefulsets,verbs=get;list;watch
-// +kubebuilder:rbac:groups="",resources=persistentvolumeclaims,verbs=get;list;watch
+// +kubebuilder:rbac:groups="",resources={persistentvolumeclaims,secrets},verbs=get;list;watch
 
 // SetupWithManager creates an setup a ManagedOCSReconciler to work with the provided manager
 func (r *ManagedOCSReconciler) SetupWithManager(mgr ctrl.Manager) error {
@@ -322,6 +331,14 @@ func (r *ManagedOCSReconciler) initReconciler(req ctrl.Request) {
 	r.alertmanagerConfigSecret = &corev1.Secret{}
 	r.alertmanagerConfigSecret.Name = alertmanagerConfigSecretName
 	r.alertmanagerConfigSecret.Namespace = r.namespace
+
+	r.serviceMonitor = &promv1.ServiceMonitor{}
+	r.serviceMonitor.Name = serviceMonitorName
+	r.serviceMonitor.Namespace = r.namespace
+
+	r.federateSecret = &corev1.Secret{}
+	r.federateSecret.Name = federateSecretName
+	r.federateSecret.Namespace = r.namespace
 
 }
 
@@ -778,7 +795,40 @@ func (r *ManagedOCSReconciler) generateAlertmanagerConfig(pagerdutyServiceKey st
 // we are reconciling in reconcilePrometheus. Doing so instructs the Prometheus instance to notice and react to these labeled
 // monitoring resources
 func (r *ManagedOCSReconciler) reconcileMonitoringResources() error {
-	r.Log.Info("reconciling monitoring resources")
+	r.Log.Info("Reconciling Monitoring Resources")
+
+	_, err := ctrl.CreateOrUpdate(r.ctx, r.Client, r.serviceMonitor, func() error {
+		if err := r.own(r.serviceMonitor); err != nil {
+			return err
+		}
+		desired := templates.ServiceMonitorTemplate.DeepCopy()
+		r.serviceMonitor.ObjectMeta.Labels = map[string]string{monLabelKey: monLabelValue}
+		err := r.readFederatedServiceMonitorCredentials()
+		if err != nil {
+			return err
+		}
+		secretObject := corev1.LocalObjectReference{
+			Name: federateSecretName,
+		}
+		secretUsernameSelector := corev1.SecretKeySelector{
+			LocalObjectReference: secretObject,
+			Key:                  "Username",
+		}
+		secretPasswordSelector := corev1.SecretKeySelector{
+			LocalObjectReference: secretObject,
+			Key:                  "Password",
+		}
+		basicAuth := promv1.BasicAuth{
+			Username: secretUsernameSelector,
+			Password: secretPasswordSelector,
+		}
+		desired.Spec.Endpoints[0].BasicAuth = &basicAuth
+		r.serviceMonitor.Spec = desired.Spec
+		return nil
+	})
+	if err != nil {
+		return err
+	}
 
 	podMonitorList := promv1.PodMonitorList{}
 	if err := r.list(&podMonitorList); err != nil {
@@ -1083,5 +1133,57 @@ func (r *ManagedOCSReconciler) reconcileRookCephOperatorConfig() error {
 
 	}
 
+	return nil
+}
+
+func (r *ManagedOCSReconciler) readFederatedServiceMonitorCredentials() error {
+	secret := &corev1.Secret{}
+	selector := client.ObjectKey{
+		Namespace: openshiftMonitoringNamespace,
+		Name:      grafanaDataSourceSecretName,
+	}
+
+	err := r.UnrestrictedClient.Get(r.ctx, selector, secret)
+	if err != nil {
+		return err
+	}
+
+	type GrafanaDataSource struct {
+		BasicAuthPassword string `json:"basicAuthPassword"`
+		BasicAuthUser     string `json:"basicAuthUSer"`
+	}
+
+	type GrafanaDataSourceSecret struct {
+		DataSources []GrafanaDataSource `json:"datasources"`
+	}
+
+	prometheusConfig := secret.Data[grafanaDataSourceSecretKey]
+	datasources := GrafanaDataSourceSecret{}
+
+	err = json.Unmarshal(prometheusConfig, &datasources)
+	if err != nil {
+		return err
+	}
+	_, err = ctrl.CreateOrUpdate(r.ctx, r.Client, r.federateSecret, func() error {
+		if err := r.own(r.federateSecret); err != nil {
+			return err
+		}
+		if datasources.DataSources[0].BasicAuthUser == "" {
+			return fmt.Errorf("federate secret does not contain a Username entry")
+		}
+		r.federateSecret.Data = map[string][]byte{"Username": []byte(datasources.DataSources[0].BasicAuthUser)}
+		if datasources.DataSources[0].BasicAuthPassword == "" {
+			return fmt.Errorf("federate secret does not contain a Password entry")
+		}
+		r.federateSecret.Data["Password"] = []byte(datasources.DataSources[0].BasicAuthPassword)
+		if r.federateSecret.Data == nil {
+			return fmt.Errorf("no data in federate secret")
+		}
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	
 	return nil
 }
