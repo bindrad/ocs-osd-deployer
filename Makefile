@@ -156,6 +156,7 @@ bundle: manifests kustomize
 	$(KUSTOMIZE) build config/manifests | operator-sdk generate bundle -q --overwrite --version $(VERSION) $(BUNDLE_METADATA_OPTS)
 	cp config/metadata/* bundle/metadata/
 	operator-sdk bundle validate ./bundle
+	yq m -i --arrays=append bundle/manifests/ocs-osd-deployer.clusterserviceversion.yaml config/rbac/federate_rules.yaml
 
 # Build the bundle image.
 .PHONY: bundle-build
