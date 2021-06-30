@@ -70,6 +70,8 @@ const (
 	monLabelKey                  = "app"
 	monLabelValue                = "managed-ocs"
 	rookConfigMapName            = "rook-ceph-operator-config"
+	alertingNamespaceName        = "openshift-storage-alerting"
+	alertingServiceMonitorName   = "alerting-service-monitor"
 )
 
 // ManagedOCSReconciler reconciles a ManagedOCS object
@@ -93,11 +95,13 @@ type ManagedOCSReconciler struct {
 	prometheus               *promv1.Prometheus
 	dmsRule                  *promv1.PrometheusRule
 	alertmanager             *promv1.Alertmanager
+	serviceMonitor           *promv1.ServiceMonitor
 	pagerdutySecret          *corev1.Secret
 	deadMansSnitchSecret     *corev1.Secret
 	alertmanagerConfigSecret *corev1.Secret
 	namespace                string
 	reconcileStrategy        v1.ReconcileStrategy
+	alertingNamespace        *corev1.Namespace
 }
 
 // Add necessary rbac permissions for managedocs finalizer in order to set blockOwnerDeletion.
@@ -113,6 +117,8 @@ type ManagedOCSReconciler struct {
 // +kubebuilder:rbac:groups=operators.coreos.com,namespace=system,resources=clusterserviceversions,verbs=get;list;watch;delete;update;patch
 // +kubebuilder:rbac:groups="apps",namespace=system,resources=statefulsets,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=persistentvolumeclaims,verbs=get;list;watch
+// +kubebuilder:rbac:groups="",resources=namespaces,verbs=get;list;watch;create;delete
+// +kubebuilder:rbac:groups="monitoring.coreos.com",resources=servicemonitors,verbs=get;list;watch;create;delete
 
 // SetupWithManager creates an setup a ManagedOCSReconciler to work with the provided manager
 func (r *ManagedOCSReconciler) SetupWithManager(mgr ctrl.Manager) error {
@@ -179,6 +185,14 @@ func (r *ManagedOCSReconciler) SetupWithManager(mgr ctrl.Manager) error {
 			},
 		),
 	)
+	alertingNamespacePredicates := builder.WithPredicates(
+		predicate.NewPredicateFuncs(
+			func(meta metav1.Object, _ runtime.Object) bool {
+				name := meta.GetName()
+				return name == alertingNamespaceName
+			},
+		),
+	)
 	enqueueManangedOCSRequest := handler.EnqueueRequestsFromMapFunc{
 		ToRequests: handler.ToRequestsFunc(
 			func(obj handler.MapObject) []reconcile.Request {
@@ -242,6 +256,11 @@ func (r *ManagedOCSReconciler) SetupWithManager(mgr ctrl.Manager) error {
 			&source.Kind{Type: &opv1a1.ClusterServiceVersion{}},
 			&enqueueManangedOCSRequest,
 			ocsCSVPredicates,
+		).
+		Watches(
+			&source.Kind{Type: &corev1.Namespace{}},
+			&enqueueManangedOCSRequest,
+			alertingNamespacePredicates,
 		).
 
 		// Create the controller
@@ -323,6 +342,12 @@ func (r *ManagedOCSReconciler) initReconciler(req ctrl.Request) {
 	r.alertmanagerConfigSecret.Name = alertmanagerConfigSecretName
 	r.alertmanagerConfigSecret.Namespace = r.namespace
 
+	r.alertingNamespace = &corev1.Namespace{}
+	r.alertingNamespace.Name = alertingNamespaceName
+
+	r.serviceMonitor = &promv1.ServiceMonitor{}
+	r.serviceMonitor.Name = alertingServiceMonitorName
+	r.serviceMonitor.Namespace = alertingNamespaceName
 }
 
 func (r *ManagedOCSReconciler) reconcilePhases() (reconcile.Result, error) {
@@ -348,6 +373,10 @@ func (r *ManagedOCSReconciler) reconcilePhases() (reconcile.Result, error) {
 			r.Log.Info("deleting storagecluster")
 			if err := r.delete(r.storageCluster); err != nil {
 				return ctrl.Result{}, fmt.Errorf("unable to delete storagecluster: %v", err)
+			}
+			r.Log.Info("deleting alerting namespace")
+			if err := r.UnrestrictedClient.Delete(r.ctx, r.alertingNamespace); err != nil && !errors.IsNotFound(err) {
+				return ctrl.Result{}, fmt.Errorf("unable to delete %v namespace: %v", alertingNamespaceName, err)
 			}
 		}
 
@@ -776,6 +805,27 @@ func (r *ManagedOCSReconciler) generateAlertmanagerConfig(pagerdutyServiceKey st
 // monitoring resources
 func (r *ManagedOCSReconciler) reconcileMonitoringResources() error {
 	r.Log.Info("reconciling monitoring resources")
+
+	_, err := ctrl.CreateOrUpdate(r.ctx, r.UnrestrictedClient, r.alertingNamespace, func() error {
+		r.alertingNamespace.Labels = map[string]string{"openshift.io/cluster-monitoring": "true"}
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+
+	_, err = ctrl.CreateOrUpdate(r.ctx, r.UnrestrictedClient, r.serviceMonitor, func() error {
+		desired := templates.AlertingServiceMonitorTemplate.DeepCopy()
+		desired.Spec.NamespaceSelector = promv1.NamespaceSelector{
+			MatchNames: []string{r.namespace},
+		}
+		r.serviceMonitor.ObjectMeta.Labels = map[string]string{monLabelKey: monLabelValue}
+		r.serviceMonitor.Spec = desired.Spec
+		return nil
+	})
+	if err != nil {
+		return err
+	}
 
 	podMonitorList := promv1.PodMonitorList{}
 	if err := r.list(&podMonitorList); err != nil {
