@@ -687,6 +687,7 @@ func (r *ManagedOCSReconciler) reconcilePrometheus() error {
 		r.prometheus.ObjectMeta.Labels = map[string]string{monLabelKey: monLabelValue}
 		r.prometheus.Spec = desired.Spec
 		r.prometheus.Spec.Alerting.Alertmanagers[0].Namespace = r.namespace
+		r.prometheus.Spec.ExternalLabels = map[string]string{"namespace": r.namespace}
 
 		if r.PrometheusImage != "" {
 			r.prometheus.Spec.Image = &r.PrometheusImage
