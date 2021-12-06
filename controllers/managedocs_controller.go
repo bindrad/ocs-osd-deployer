@@ -106,6 +106,7 @@ type ManagedOCSReconciler struct {
 	SOPEndpoint                  string
 	AlertSMTPFrom                string
 	CustomerNotificationHTMLPath string
+	AddonType                    string
 
 	ctx                                context.Context
 	managedOCS                         *v1.ManagedOCS
@@ -441,9 +442,22 @@ func (r *ManagedOCSReconciler) reconcilePhases() (reconcile.Result, error) {
 		if err := r.reconcileRookCephOperatorConfig(); err != nil {
 			return ctrl.Result{}, err
 		}
-		if err := r.reconcileStorageCluster(); err != nil {
-			return ctrl.Result{}, err
+
+		switch r.AddonType {
+		case "converged":
+			if err := r.reconcileConvergedStorageCluster(); err != nil {
+				return ctrl.Result{}, err
+			}
+		case "provider":
+			if err := r.reconcileProviderStorageCluster(); err != nil {
+				return ctrl.Result{}, err
+			}
+		case "consumer":
+			if err := r.reconcileConsumerStorageCluster(); err != nil {
+				return ctrl.Result{}, err
+			}
 		}
+
 		if err := r.reconcileOCSCSV(); err != nil {
 			return ctrl.Result{}, err
 		}
@@ -596,8 +610,8 @@ func (r *ManagedOCSReconciler) verifyComponentsDoNotExist() bool {
 	return false
 }
 
-func (r *ManagedOCSReconciler) reconcileStorageCluster() error {
-	r.Log.Info("Reconciling StorageCluster")
+func (r *ManagedOCSReconciler) reconcileConsumerStorageCluster() error {
+	r.Log.Info("Reconciling Consumer StorageCluster")
 
 	_, err := ctrl.CreateOrUpdate(r.ctx, r.Client, r.storageCluster, func() error {
 		if err := r.own(r.storageCluster); err != nil {
@@ -607,7 +621,65 @@ func (r *ManagedOCSReconciler) reconcileStorageCluster() error {
 		// Handle only strict mode reconciliation
 		if r.reconcileStrategy == v1.ReconcileStrategyStrict {
 			// Get an instance of the desired state
-			desired := templates.StorageClusterTemplate.DeepCopy()
+			desired := templates.ConsumerStorageClusterTemplate.DeepCopy()
+			if err := r.updateStorageClusterFromAddonParamsSecret(desired); err != nil {
+				return err
+			}
+
+			// Override storage cluster spec with desired spec from the template.
+			// We do not replace meta or status on purpose
+			r.storageCluster.Spec = desired.Spec
+		}
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (r *ManagedOCSReconciler) reconcileProviderStorageCluster() error {
+	r.Log.Info("Reconciling Provider StorageCluster")
+
+	_, err := ctrl.CreateOrUpdate(r.ctx, r.Client, r.storageCluster, func() error {
+		if err := r.own(r.storageCluster); err != nil {
+			return err
+		}
+
+		// Handle only strict mode reconciliation
+		if r.reconcileStrategy == v1.ReconcileStrategyStrict {
+			// Get an instance of the desired state
+			desired := templates.ProviderStorageClusterTemplate.DeepCopy()
+			if err := r.updateStorageClusterFromAddonParamsSecret(desired); err != nil {
+				return err
+			}
+
+			// Override storage cluster spec with desired spec from the template.
+			// We do not replace meta or status on purpose
+			r.storageCluster.Spec = desired.Spec
+		}
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (r *ManagedOCSReconciler) reconcileConvergedStorageCluster() error {
+	r.Log.Info("Reconciling Converged StorageCluster")
+
+	_, err := ctrl.CreateOrUpdate(r.ctx, r.Client, r.storageCluster, func() error {
+		if err := r.own(r.storageCluster); err != nil {
+			return err
+		}
+
+		// Handle only strict mode reconciliation
+		if r.reconcileStrategy == v1.ReconcileStrategyStrict {
+			// Get an instance of the desired state
+			desired := templates.ConvergedStorageClusterTemplate.DeepCopy()
 			if err := r.updateStorageClusterFromAddonParamsSecret(desired); err != nil {
 				return err
 			}
