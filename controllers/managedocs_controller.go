@@ -89,6 +89,7 @@ const (
 	openshiftMonitoringNamespace           = "openshift-monitoring"
 	alertRelabelConfigSecretName           = "managed-ocs-alert-relabel-config-secret"
 	alertRelabelConfigSecretKey            = "alertrelabelconfig.yaml"
+	odfOperatorManagerconfigMapName        = "odf-operator-manager-config"
 )
 
 // ManagedOCSReconciler reconciles a ManagedOCS object
@@ -128,6 +129,7 @@ type ManagedOCSReconciler struct {
 	k8sMetricsServiceMonitorAuthSecret *corev1.Secret
 	namespace                          string
 	reconcileStrategy                  v1.ReconcileStrategy
+	odfOperatorManagerconfigMap        *corev1.ConfigMap
 }
 
 // Add necessary rbac permissions for managedocs finalizer in order to set blockOwnerDeletion.
@@ -174,7 +176,7 @@ func (r *ManagedOCSReconciler) SetupWithManager(mgr ctrl.Manager) error {
 					if _, ok := meta.GetLabels()[r.AddonConfigMapDeleteLabelKey]; ok {
 						return true
 					}
-				} else if name == rookConfigMapName {
+				} else if name == rookConfigMapName || name == odfOperatorManagerconfigMapName {
 					return true
 				}
 				return false
@@ -213,6 +215,14 @@ func (r *ManagedOCSReconciler) SetupWithManager(mgr ctrl.Manager) error {
 			},
 		),
 	)
+	storageClusterPredicates := builder.WithPredicates(
+		predicate.NewPredicateFuncs(
+			func(meta metav1.Object, _ runtime.Object) bool {
+				name := meta.GetName()
+				return name == storageClusterName
+			},
+		),
+	)
 	enqueueManangedOCSRequest := handler.EnqueueRequestsFromMapFunc{
 		ToRequests: handler.ToRequestsFunc(
 			func(obj handler.MapObject) []reconcile.Request {
@@ -231,7 +241,7 @@ func (r *ManagedOCSReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		For(&v1.ManagedOCS{}, managedOCSPredicates).
 
 		// Watch owned resources
-		Owns(&ocsv1.StorageCluster{}).
+		//Owns(&ocsv1.StorageCluster{}).
 		Owns(&promv1.Prometheus{}).
 		Owns(&promv1.Alertmanager{}).
 		Owns(&promv1a1.AlertmanagerConfig{}).
@@ -280,6 +290,11 @@ func (r *ManagedOCSReconciler) SetupWithManager(mgr ctrl.Manager) error {
 			&source.Kind{Type: &opv1a1.ClusterServiceVersion{}},
 			&enqueueManangedOCSRequest,
 			ocsCSVPredicates,
+		).
+		Watches(
+			&source.Kind{Type: &ocsv1.StorageCluster{}},
+			&enqueueManangedOCSRequest,
+			storageClusterPredicates,
 		).
 
 		// Create the controller
@@ -393,6 +408,10 @@ func (r *ManagedOCSReconciler) initReconciler(req ctrl.Request) {
 	r.alertRelabelConfigSecret.Name = alertRelabelConfigSecretName
 	r.alertRelabelConfigSecret.Namespace = r.namespace
 
+	r.odfOperatorManagerconfigMap = &corev1.ConfigMap{}
+	r.odfOperatorManagerconfigMap.Name = odfOperatorManagerconfigMapName
+	r.odfOperatorManagerconfigMap.Namespace = r.namespace
+
 }
 
 func (r *ManagedOCSReconciler) reconcilePhases() (reconcile.Result, error) {
@@ -441,6 +460,9 @@ func (r *ManagedOCSReconciler) reconcilePhases() (reconcile.Result, error) {
 		}
 
 		// Reconcile the different resources
+		if err := r.reconcileODFOperatorMgrConfig(); err != nil {
+			return ctrl.Result{}, err
+		}
 		if err := r.reconcileRookCephOperatorConfig(); err != nil {
 			return ctrl.Result{}, err
 		}
@@ -599,13 +621,26 @@ func (r *ManagedOCSReconciler) verifyComponentsDoNotExist() bool {
 	return false
 }
 
+func (r *ManagedOCSReconciler) reconcileODFOperatorMgrConfig() error {
+	r.Log.Info("Reconciling odf-operator-manager-config ConfigMap")
+
+	_, err := ctrl.CreateOrUpdate(r.ctx, r.Client, r.odfOperatorManagerconfigMap, func() error {
+		r.odfOperatorManagerconfigMap.Data["ODF_SUBSCRIPTION_NAME"] = "odf-operator-stable-4.9-redhat-operators-openshift-marketplace"
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
 func (r *ManagedOCSReconciler) reconcileStorageCluster() error {
 	r.Log.Info("Reconciling StorageCluster")
 
 	_, err := ctrl.CreateOrUpdate(r.ctx, r.Client, r.storageCluster, func() error {
-		if err := r.own(r.storageCluster); err != nil {
-			return err
-		}
+		// if err := r.own(r.storageCluster); err != nil {
+		// 	return err
+		// }
 
 		// Handle only strict mode reconciliation
 		if r.reconcileStrategy == v1.ReconcileStrategyStrict {
