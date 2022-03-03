@@ -240,23 +240,6 @@ var _ = Describe("ManagedOCS controller", func() {
 			Namespace: testPrimaryNamespace,
 		},
 	}
-	var grafanaDatasources struct {
-		Datasources [1]struct {
-			BasicAuthPassword string `json:"basicAuthPassword"`
-			BasicAuthUser     string `json:"basicAuthUser"`
-		} `json:"datasources"`
-	}
-	grafanaDatasources.Datasources[0].BasicAuthPassword = "password"
-	grafanaDatasources.Datasources[0].BasicAuthUser = "internal"
-	grafanaDatasourceSecretTemplate := corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      testGrafanaFederateSecretName,
-			Namespace: testOpenshiftMonitoringNamespace,
-		},
-		Data: map[string][]byte{
-			"prometheus.yaml": utils.ToJsonOrDie(grafanaDatasources),
-		},
-	}
 	k8sMetricsServiceMonitorAuthSecretTemplate := corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      testK8sMetricsServiceMonitorAuthSecretName,
@@ -279,6 +262,12 @@ var _ = Describe("ManagedOCS controller", func() {
 	mcgCSVTemplate := opv1a1.ClusterServiceVersion{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      mcgOperatorName,
+			Namespace: testPrimaryNamespace,
+		},
+	}
+	onboardingValidationKeySecretTemplate := corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      onboardingValidationKeySecretName,
 			Namespace: testPrimaryNamespace,
 		},
 	}
@@ -536,6 +525,22 @@ var _ = Describe("ManagedOCS controller", func() {
 					Expect(k8sClient.Delete(ctx, secret)).Should(Succeed())
 				})
 			})
+			When("there is no onboarding-validation-key field in the add-on parameters secret", func() {
+				It("should not create onboarding-ticket-key secret", func() {
+					if testReconciler.DeploymentType != providerDeploymentType {
+						Skip(fmt.Sprintf("Skipping the test as it is not required by %v", testReconciler.DeploymentType))
+					}
+					// Create empty add-on parameters secret
+					secret := addonParamsSecretTemplate.DeepCopy()
+					Expect(k8sClient.Create(ctx, secret)).Should(Succeed())
+
+					// Ensure, over a period of time, that the resources are not created
+					utils.EnsureNoResource(k8sClient, ctx, onboardingValidationKeySecretTemplate.DeepCopy(), timeout, interval)
+
+					// Remove the secret for future cases
+					Expect(k8sClient.Delete(ctx, secret)).Should(Succeed())
+				})
+			})
 			When("there is an invalid size value in the add-on parameters secret", func() {
 				It("should not create reconciled resources", func() {
 					// Create a invalid add-on parameters secret
@@ -640,38 +645,51 @@ var _ = Describe("ManagedOCS controller", func() {
 			})
 			When("there is a valid size in the add-on parameter secret", func() {
 				It("should create reconciled resources", func() {
-					if testReconciler.DeploymentType == consumerDeploymentType {
-						Skip(fmt.Sprintf("Skipping the test as it is not required by %v", testReconciler.DeploymentType))
-					}
+
 					// Create a valid add-on parameters secret
 					secret := addonParamsSecretTemplate.DeepCopy()
 					secret.Data["size"] = []byte("1")
 					secret.Data["enable-mcg"] = []byte("false")
-					Expect(k8sClient.Create(ctx, secret)).Should(Succeed())
-
-					By("Creating a storagecluster resource")
-					utils.WaitForResource(k8sClient, ctx, scTemplate.DeepCopy(), timeout, interval)
-
-					By("Creating a prometheus resource")
-					utils.WaitForResource(k8sClient, ctx, promTemplate.DeepCopy(), timeout, interval)
-
-					By("Creating an alertmanager resource")
-					utils.WaitForResource(k8sClient, ctx, amTemplate.DeepCopy(), timeout, interval)
-				})
-				It("should create reconciled resources", func() {
-					if testReconciler.DeploymentType == convergedDeploymentType {
-						Skip(fmt.Sprintf("Skipping the test as it is not required by %v", testReconciler.DeploymentType))
+					switch testReconciler.DeploymentType {
+					case consumerDeploymentType:
+						secret.Data["onboarding-ticket"] = []byte("onboarding-tickets")
+						secret.Data["storage-provider-endpoint"] = []byte("0.0.0.0:36179")
+					case providerDeploymentType:
+						secret.Data["onboarding-validation-key"] = []byte("test-validation-key")
 					}
-					// Create a valid add-on parameters secret
-					secret := addonParamsSecretTemplate.DeepCopy()
-					secret.Data["size"] = []byte("1")
-					secret.Data["enable-mcg"] = []byte("false")
-					secret.Data["onboarding-ticket"] = []byte("onboarding-tickets")
-					secret.Data["storage-provider-endpoint"] = []byte("0.0.0.0:36179")
 					Expect(k8sClient.Create(ctx, secret)).Should(Succeed())
 
 					By("Creating a storagecluster resource")
-					utils.WaitForResource(k8sClient, ctx, scTemplate.DeepCopy(), timeout, interval)
+					sc := scTemplate.DeepCopy()
+					switch testReconciler.DeploymentType {
+					case convergedDeploymentType:
+						sc.Spec = ocsv1.StorageClusterSpec{
+							MultiCloudGateway: &ocsv1.MultiCloudGatewaySpec{
+								ReconcileStrategy: "ignore",
+							},
+						}
+					case consumerDeploymentType:
+						sc.Spec = ocsv1.StorageClusterSpec{
+							ExternalStorage: ocsv1.ExternalStorageClusterSpec{
+								Enable:                  true,
+								StorageProviderKind:     ocsv1.KindOCS,
+								StorageProviderEndpoint: "0.0.0.0:36179",
+								OnboardingTicket:        "test-validation-key",
+							},
+							MultiCloudGateway: &ocsv1.MultiCloudGatewaySpec{
+								ReconcileStrategy: "ignore",
+							},
+						}
+					case providerDeploymentType:
+						sc.Spec = ocsv1.StorageClusterSpec{
+							MultiCloudGateway: &ocsv1.MultiCloudGatewaySpec{
+								ReconcileStrategy: "ignore",
+							},
+							HostNetwork:                 true,
+							AllowRemoteStorageConsumers: true,
+						}
+					}
+					utils.WaitForResource(k8sClient, ctx, sc, timeout, interval)
 
 					By("Creating a prometheus resource")
 					utils.WaitForResource(k8sClient, ctx, promTemplate.DeepCopy(), timeout, interval)
@@ -1139,8 +1157,6 @@ var _ = Describe("ManagedOCS controller", func() {
 			})
 			When("a Grafana datasources secret exists in the openshift-monitoring namespace", func() {
 				It("should create k8sMetricsServiceMonitorAuthSecret in primary namespace", func() {
-					grafanaSecret := grafanaDatasourceSecretTemplate.DeepCopy()
-					Expect(k8sClient.Create(ctx, grafanaSecret)).Should(Succeed())
 					// Check for federate-basic-auth secret in primary namespace
 					utils.WaitForResource(k8sClient, ctx, k8sMetricsServiceMonitorAuthSecretTemplate.DeepCopy(), timeout, interval)
 				})
@@ -1441,7 +1457,7 @@ var _ = Describe("ManagedOCS controller", func() {
 			})
 			When("the EgressNetworkPolicy resource is modified", func() {
 				It("should revert the changes and bring the resource back to its managed state", func() {
-					if testReconciler.DeploymentType == consumerDeploymentType {
+					if testReconciler.DeploymentType != convergedDeploymentType {
 						Skip(fmt.Sprintf("Skipping this test for %v deployment till we implement network policy for it ", testReconciler.DeploymentType))
 					}
 					// Get an updated EgressNetworkPolicy
@@ -1466,7 +1482,7 @@ var _ = Describe("ManagedOCS controller", func() {
 			})
 			When("the SNITCH_URL value in dms secret is modified", func() {
 				It("should update the EgressNetworkPolicy resource with the new snitch domain", func() {
-					if testReconciler.DeploymentType == consumerDeploymentType {
+					if testReconciler.DeploymentType != convergedDeploymentType {
 						Skip(fmt.Sprintf("Skipping this test for %v deployment till we implement network policy for it ", testReconciler.DeploymentType))
 					}
 					dmsSecret := dmsSecretTemplate.DeepCopy()
@@ -1490,7 +1506,7 @@ var _ = Describe("ManagedOCS controller", func() {
 			})
 			When("the host value in smtp secret is modified", func() {
 				It("should update the EgressNetworkPolicy resource with the new host", func() {
-					if testReconciler.DeploymentType == consumerDeploymentType {
+					if testReconciler.DeploymentType != convergedDeploymentType {
 						Skip(fmt.Sprintf("Skipping this test for %v deployment till we implement network policy for it ", testReconciler.DeploymentType))
 					}
 					smtpSecret := smtpSecretTemplate.DeepCopy()
@@ -1514,7 +1530,7 @@ var _ = Describe("ManagedOCS controller", func() {
 			})
 			When("the EgressNetworkPolicy resource is deleted", func() {
 				It("should create a new EgressNetworkPolicy in the namespace", func() {
-					if testReconciler.DeploymentType == consumerDeploymentType {
+					if testReconciler.DeploymentType != convergedDeploymentType {
 						Skip(fmt.Sprintf("Skipping this test for %v deployment till we implement network policy for it ", testReconciler.DeploymentType))
 					}
 					// Delete the EgressNetworkPolicy resource
@@ -1526,7 +1542,7 @@ var _ = Describe("ManagedOCS controller", func() {
 			})
 			When("the ingress NetworkPolicy resource is modified", func() {
 				It("should revert the changes and bring the resource back to its managed state", func() {
-					if testReconciler.DeploymentType == consumerDeploymentType {
+					if testReconciler.DeploymentType != convergedDeploymentType {
 						Skip(fmt.Sprintf("Skipping this test for %v deployment till we implement network policy for it ", testReconciler.DeploymentType))
 					}
 					// Get an updated NetworkPolicy
@@ -1549,7 +1565,7 @@ var _ = Describe("ManagedOCS controller", func() {
 			})
 			When("the ingress NetworkPolicy resource is deleted", func() {
 				It("should create a new ingress NetworkPolicy in the namespace", func() {
-					if testReconciler.DeploymentType == consumerDeploymentType {
+					if testReconciler.DeploymentType != convergedDeploymentType {
 						Skip(fmt.Sprintf("Skipping this test for %v deployment till we implement network policy for it ", testReconciler.DeploymentType))
 					}
 					// Delete the NetworkPolicy resource
@@ -1561,7 +1577,7 @@ var _ = Describe("ManagedOCS controller", func() {
 			})
 			When("the ceph ingress NetworkPolicy resource is modified", func() {
 				It("should revert the changes and bring the resource back to its managed state", func() {
-					if testReconciler.DeploymentType == consumerDeploymentType {
+					if testReconciler.DeploymentType != convergedDeploymentType {
 						Skip(fmt.Sprintf("Skipping this test for %v deployment till we implement network policy for it ", testReconciler.DeploymentType))
 					}
 					// Get an updated NetworkPolicy
@@ -1584,7 +1600,7 @@ var _ = Describe("ManagedOCS controller", func() {
 			})
 			When("the ceph ingress NetworkPolicy resource is deleted", func() {
 				It("should create a new ingress NetworkPolicy in the namespace", func() {
-					if testReconciler.DeploymentType == consumerDeploymentType {
+					if testReconciler.DeploymentType != convergedDeploymentType {
 						Skip(fmt.Sprintf("Skipping this test for %v deployment till we implement network policy for it ", testReconciler.DeploymentType))
 					}
 					// Delete the NetworkPolicy resource
@@ -1592,6 +1608,15 @@ var _ = Describe("ManagedOCS controller", func() {
 
 					// Wait for the NetworkPolicy to be recreated
 					utils.WaitForResource(k8sClient, ctx, cephIngressNetworkPolicyTemplate.DeepCopy(), timeout, interval)
+				})
+			})
+			When("there is onboarding-validation-key field in the add-on parameters secret", func() {
+				It("should create onboarding-ticket-key secret", func() {
+					if testReconciler.DeploymentType != providerDeploymentType {
+						Skip(fmt.Sprintf("Skipping the test as it is not required by %v", testReconciler.DeploymentType))
+					}
+					secret := onboardingValidationKeySecretTemplate.DeepCopy()
+					Expect(k8sClient.Get(ctx, utils.GetResourceKey(secret), secret)).Should(Succeed())
 				})
 			})
 			When("the addon config map does not exist while all other uninstall conditions are met", func() {
@@ -1710,7 +1735,6 @@ var _ = Describe("ManagedOCS controller", func() {
 					amTemplate.DeepCopy(),
 					amStsTemplate.DeepCopy(),
 					pdSecretTemplate.DeepCopy(),
-					grafanaDatasourceSecretTemplate.DeepCopy(),
 					amConfigTemplate.DeepCopy(),
 					podMonitorTemplate.DeepCopy(),
 					serviceMonitorTemplate.DeepCopy(),
@@ -1729,5 +1753,5 @@ var _ = Describe("ManagedOCS controller", func() {
 
 	runTests(convergedDeploymentType)
 	runTests(consumerDeploymentType)
-
+	runTests(providerDeploymentType)
 })

@@ -23,6 +23,13 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	openshiftv1 "github.com/openshift/api/network/v1"
+	opv1a1 "github.com/operator-framework/api/pkg/operators/v1alpha1"
+	promv1 "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
+	promv1a1 "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1alpha1"
+	ocsv1 "github.com/red-hat-storage/ocs-operator/api/v1"
+	v1 "github.com/red-hat-storage/ocs-osd-deployer/api/v1alpha1"
+	utils "github.com/red-hat-storage/ocs-osd-deployer/testutils"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -33,13 +40,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
-
-	openshiftv1 "github.com/openshift/api/network/v1"
-	opv1a1 "github.com/operator-framework/api/pkg/operators/v1alpha1"
-	promv1 "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
-	promv1a1 "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1alpha1"
-	ocsv1 "github.com/red-hat-storage/ocs-operator/api/v1"
-	v1 "github.com/red-hat-storage/ocs-osd-deployer/api/v1alpha1"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -176,6 +176,22 @@ var _ = BeforeSuite(func() {
 			"test-key": "test-value",
 		}
 		Expect(k8sClient.Create(ctx, rookConfigMap)).ShouldNot(HaveOccurred())
+
+		var grafanaDatasources struct {
+			Datasources [1]struct {
+				BasicAuthPassword string `json:"basicAuthPassword"`
+				BasicAuthUser     string `json:"basicAuthUser"`
+			} `json:"datasources"`
+		}
+		grafanaDatasources.Datasources[0].BasicAuthPassword = "password"
+		grafanaDatasources.Datasources[0].BasicAuthUser = "internal"
+		grafanaDatasourceSecret := &corev1.Secret{}
+		grafanaDatasourceSecret.Name = testGrafanaFederateSecretName
+		grafanaDatasourceSecret.Namespace = testOpenshiftMonitoringNamespace
+		grafanaDatasourceSecret.Data = map[string][]byte{
+			"prometheus.yaml": utils.ToJsonOrDie(grafanaDatasources),
+		}
+		Expect(k8sClient.Create(ctx, grafanaDatasourceSecret)).ShouldNot(HaveOccurred())
 
 		close(done)
 	}()
