@@ -28,7 +28,7 @@ import (
 var _ = Describe("ManagedOCS controller", func() {
 	// Define utility constants for object names and testing timeouts/durations and intervals.
 	const (
-		timeout  = time.Second * 3
+		timeout  = time.Second * 8
 		interval = time.Millisecond * 250
 	)
 
@@ -660,36 +660,40 @@ var _ = Describe("ManagedOCS controller", func() {
 					Expect(k8sClient.Create(ctx, secret)).Should(Succeed())
 
 					By("Creating a storagecluster resource")
-					sc := scTemplate.DeepCopy()
-					switch testReconciler.DeploymentType {
-					case convergedDeploymentType:
-						sc.Spec = ocsv1.StorageClusterSpec{
-							MultiCloudGateway: &ocsv1.MultiCloudGatewaySpec{
-								ReconcileStrategy: "ignore",
-							},
+					utils.WaitForResource(k8sClient, ctx, scTemplate.DeepCopy(), timeout, interval)
+
+					Eventually(func() bool {
+						sc := scTemplate.DeepCopy()
+						err := k8sClient.Get(ctx, utils.GetResourceKey(sc), sc)
+						if err != nil {
+							return false
 						}
-					case consumerDeploymentType:
-						sc.Spec = ocsv1.StorageClusterSpec{
-							ExternalStorage: ocsv1.ExternalStorageClusterSpec{
-								Enable:                  true,
-								StorageProviderKind:     ocsv1.KindOCS,
-								StorageProviderEndpoint: "0.0.0.0:36179",
-								OnboardingTicket:        "test-validation-key",
-							},
-							MultiCloudGateway: &ocsv1.MultiCloudGatewaySpec{
-								ReconcileStrategy: "ignore",
-							},
+
+						var ds *ocsv1.StorageDeviceSet = nil
+						for index := range sc.Spec.StorageDeviceSets {
+							item := &sc.Spec.StorageDeviceSets[index]
+							if item.Name == deviceSetName {
+								ds = item
+								break
+							}
 						}
-					case providerDeploymentType:
-						sc.Spec = ocsv1.StorageClusterSpec{
-							MultiCloudGateway: &ocsv1.MultiCloudGatewaySpec{
-								ReconcileStrategy: "ignore",
-							},
-							HostNetwork:                 true,
-							AllowRemoteStorageConsumers: true,
+						switch testReconciler.DeploymentType {
+						case convergedDeploymentType:
+							return ds != nil && ds.Count == 1
+						case consumerDeploymentType:
+							//fmt.Printf("%v ----- %v ----- %v\n", sc.Spec.ExternalStorage.Enable, sc.Spec.ExternalStorage.OnboardingTicket, sc.Spec.ExternalStorage.StorageProviderEndpoint)
+							return sc.Spec.ExternalStorage.Enable == true &&
+								sc.Spec.ExternalStorage.OnboardingTicket == "onboarding-tickets" &&
+								sc.Spec.ExternalStorage.StorageProviderEndpoint == "0.0.0.0:36179"
+						case providerDeploymentType:
+							//fmt.Printf("%v ----- %v\n", sc.Spec.HostNetwork, sc.Spec.AllowRemoteStorageConsumers)
+							return ds != nil && ds.Count == 1 &&
+								sc.Spec.HostNetwork == true &&
+								sc.Spec.AllowRemoteStorageConsumers == true
+						default:
+							return false
 						}
-					}
-					utils.WaitForResource(k8sClient, ctx, sc, timeout, interval)
+					}, timeout, interval).Should(BeTrue())
 
 					By("Creating a prometheus resource")
 					utils.WaitForResource(k8sClient, ctx, promTemplate.DeepCopy(), timeout, interval)
