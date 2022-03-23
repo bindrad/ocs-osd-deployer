@@ -1,0 +1,8 @@
+---
+extends: default
+yaml-files:
+  - '*.yaml'
+  - '*.yml'
+  - '.yamllint'
+ignore: |
+  vendor
