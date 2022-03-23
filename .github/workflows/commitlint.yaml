@@ -16,7 +16,7 @@ jobs:
     - name: run commitlint
       uses: wagoid/commitlint-github-action@v4
       with:
-        configFile: './.github/workflows/conf/commitlintrc.json'
+        configFile: './conf/commitlintrc.json'
         helpURL: |
           Some helpful links
           Naming Conventions -> https://commitlint.js.org/#/concepts-commit-conventions
