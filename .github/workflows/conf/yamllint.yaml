@@ -6,3 +6,4 @@ yaml-files:
   - '.yamllint'
 ignore: |
   vendor
+  shim
