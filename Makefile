@@ -1,3 +1,5 @@
+# Makefile uses sh shell by default but we want to use bash
+SHELL := /bin/bash
 # Current Operator version
 VERSION ?= 2.0.1
 # Default bundle image tag
