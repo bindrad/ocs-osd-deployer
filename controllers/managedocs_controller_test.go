@@ -1869,7 +1869,7 @@ var _ = Describe("ManagedOCS controller", func() {
 				}
 
 				for _, object := range resList {
-					k8sClient.Delete(ctx, object)
+					Expect(k8sClient.Delete(ctx, object)).Should(Succeed())
 				}
 
 				utils.EnsureNoResources(k8sClient, ctx, resList, timeout, interval)
