@@ -1,5 +1,5 @@
 pull_request_rules:
-  - name: ping owners for review
+  - name: need owners approvals to merge PR
     conditions: 
       - "#approved-reviews-by>=1"
       - "#review-requested=0"
@@ -8,3 +8,10 @@ pull_request_rules:
     actions:
       merge:
         method: merge
+  - name: add draft label to draft PR
+    conditions:
+      - "draft=true"
+    actions:
+      label:
+        add:
+          - draft
