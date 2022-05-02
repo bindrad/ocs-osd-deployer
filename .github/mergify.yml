@@ -1,0 +1,30 @@
+pull_request_rules:
+  - name: need owners approvals to merge PR
+    conditions: 
+      - "#approved-reviews-by>=1"
+      - "#review-requested=0"
+      - "#changes-requested-reviews-by=0"
+      - "approved-reviews-by=nb-ohad"
+    actions:
+      merge:
+        method: merge
+  - name: add draft label to draft PR
+    conditions:
+      - draft
+    actions:
+      label:
+        add:
+          - draft
+  - name: ping author on conflicts
+    conditions:
+      - conflict
+    actions:
+      comment:
+        message: This pull request has merge conflicts that must be resolved before it can be merged. @{{author}} please rebase it.
+  - name: ping author on conflicts
+    conditions:
+      - conflict
+    actions:
+      label:
+        add:
+          - conflict
