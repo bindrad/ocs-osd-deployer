@@ -87,7 +87,7 @@ var _ = BeforeSuite(func() {
 		Expect(err).ToNot(HaveOccurred())
 		Expect(k8sClient).ToNot(BeNil())
 
-		go RunServer(k8sClient, types.NamespacedName{Name: ManagedOCSName, Namespace: TestNamespace}, ctrl.Log.WithName("readiness"))
+		go RunServer(k8sClient, types.NamespacedName{Name: ManagedOCSName, Namespace: TestNamespace}, ctrl.Log.WithName("readiness")) //nolint
 
 		ctx := context.Background()
 
