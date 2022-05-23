@@ -13,6 +13,9 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      - name: Print SHELL
+        run: echo $SHELL
+
       - uses: actions/setup-go@v3
         with:
           go-version: 1.16
