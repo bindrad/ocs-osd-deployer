@@ -17,6 +17,11 @@ jobs:
 
       - name: export go-version
         run: export GO_VERSION=`grep -m 1 -r "go" go.mod | awk '{print $2}'`
+        env:
+          GO_VERSION: ${{ env.GO_VERSION }} 
+        
+      - name: print GO_VERSION
+        run: echo $GO_VERSION
 
       - uses: actions/setup-go@v3
         with:
