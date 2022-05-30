@@ -13,14 +13,14 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Print SHELL
-        run: echo $SHELL
+      - uses: actions/checkout@v3
+
+      - name: export go-version
+        run: export GO_VERSION=`grep -m 1 -r "go" go.mod | awk '{print $2}'`
 
       - uses: actions/setup-go@v3
         with:
-          go-version: 1.16
-
-      - uses: actions/checkout@v3
+          go-version: $GO_VERSION
 
       - name: Build operator docker image
         run: make docker-build
