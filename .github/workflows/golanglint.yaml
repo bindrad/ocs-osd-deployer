@@ -9,13 +9,11 @@ on:
 
 jobs:
   golangci-lint:
-    name: golangci-lint
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/setup-go@v3
-        with:
-          go-version: 1.16
       - uses: actions/checkout@v3
+      - name: Setup go env
+        uses: bindrad/ocs-osd-deployer@actions
       - name: golangci-lint
         uses: golangci/golangci-lint-action@v3
         with:
