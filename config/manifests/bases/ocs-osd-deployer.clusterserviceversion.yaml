@@ -13,6 +13,12 @@ spec:
   apiservicedefinitions: {}
   customresourcedefinitions:
     owned:
+    - description: ManagedFusionDeployment is the Schema for the managedfusiondeployments
+        API
+      displayName: Managed Fusion Deployment
+      kind: ManagedFusionDeployment
+      name: managedfusiondeployments.ocs.openshift.io
+      version: v1alpha1
     - description: ManagedOCS is the Schema for the managedocs API
       displayName: Managed OCS
       kind: ManagedOCS

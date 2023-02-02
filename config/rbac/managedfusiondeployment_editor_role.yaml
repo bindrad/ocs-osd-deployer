@@ -1,0 +1,24 @@
+# permissions for end users to edit managedfusiondeployments.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: managedfusiondeployment-editor-role
+rules:
+- apiGroups:
+  - ocs.openshift.io
+  resources:
+  - managedfusiondeployments
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - ocs.openshift.io
+  resources:
+  - managedfusiondeployments/status
+  verbs:
+  - get

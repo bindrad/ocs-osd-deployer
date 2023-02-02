@@ -94,8 +94,6 @@ const (
 	cephIngressNetworkPolicyName       = "ceph-ingress-rule"
 	providerApiServerNetworkPolicyName = "provider-api-server-rule"
 	prometheusProxyNetworkPolicyName   = "prometheus-proxy-rule"
-	monLabelKey                        = "app"
-	monLabelValue                      = "managed-ocs"
 	rookConfigMapName                  = "rook-ceph-operator-config"
 	k8sMetricsServiceMonitorName       = "k8s-metrics-service-monitor"
 	alertRelabelConfigSecretName       = "managed-ocs-alert-relabel-config-secret"
