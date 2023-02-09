@@ -61,17 +61,9 @@ spec:
                     required:
                     - state
                     type: object
-                  storageCluster:
-                    properties:
-                      state:
-                        type: string
-                    required:
-                    - state
-                    type: object
                 required:
                 - alertmanager
                 - prometheus
-                - storageCluster
                 type: object
               reconcileStrategy:
                 description: ReconcileStrategy represent the action the deployer should

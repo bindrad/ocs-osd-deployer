@@ -133,7 +133,8 @@ test-consumer: manifests generate fmt vet envtest ## Run consumer mode tests.
 	KUBEBUILDER_ASSETS="$(shell $(ENVTEST) use $(ENVTEST_K8S_VERSION) -p path)" DEPLOYMENT_TYPE=consumer go test ./... -coverprofile cover.out
 
 .PHONY: test
-test: test-converged test-provider test-consumer ## Run tests.
+test: manifests generate fmt vet envtest ## Run tests.
+	KUBEBUILDER_ASSETS="$(shell $(ENVTEST) use $(ENVTEST_K8S_VERSION) -p path)" go test ./... -coverprofile cover.out
 
 ##@ Build
 

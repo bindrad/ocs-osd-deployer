@@ -43,6 +43,14 @@ import (
 	"github.com/red-hat-storage/ocs-osd-deployer/utils"
 )
 
+const (
+	ocsOperatorName   = "ocs-operator"
+	rookConfigMapName = "rook-ceph-operator-config"
+	mcgOperatorName   = "mcg-operator"
+	storageSizeKey    = "size"
+	deviceSetName     = "default"
+)
+
 // ManagedFusionOfferingReconciler reconciles a ManagedFusionOffering object
 type ManagedFusionOfferingReconciler struct {
 	client.Client
@@ -55,6 +63,48 @@ type ManagedFusionOfferingReconciler struct {
 	OCSOperatorSource     *opv1a1.CatalogSource
 	OCSSubscription       *opv1a1.Subscription
 	storageCluster        *ocsv1.StorageCluster
+}
+
+// SetupWithManager sets up the controller with the Manager.
+func (r *ManagedFusionOfferingReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	managedFusionOfferingPredicates := builder.WithPredicates(
+		predicate.GenerationChangedPredicate{},
+	)
+	csvPredicates := builder.WithPredicates(
+		predicate.NewPredicateFuncs(
+			func(client client.Object) bool {
+				return strings.HasPrefix(client.GetName(), ocsOperatorName)
+			},
+		),
+	)
+	configMapPredicates := builder.WithPredicates(
+		predicate.NewPredicateFuncs(
+			func(client client.Object) bool {
+				name := client.GetName()
+				return name == rookConfigMapName
+			},
+		),
+	)
+	return ctrl.NewControllerManagedBy(mgr).
+		For(&v1alpha1.ManagedFusionOffering{}, managedFusionOfferingPredicates).
+		Owns(&opv1a1.CatalogSource{}).
+		Owns(&opv1a1.Subscription{}).
+		Owns(&ocsv1.StorageCluster{}).
+		Watches(
+			&source.Kind{Type: &opv1a1.ClusterServiceVersion{}},
+			&handler.EnqueueRequestForObject{},
+			csvPredicates,
+		).
+		Watches(
+			&source.Kind{Type: &corev1.ConfigMap{}},
+			&handler.EnqueueRequestForObject{},
+			configMapPredicates,
+		).
+		Watches(
+			&source.Kind{Type: &ocsv1.OCSInitialization{}},
+			&handler.EnqueueRequestForObject{},
+		).
+		Complete(r)
 }
 
 //+kubebuilder:rbac:groups=ocs.openshift.io,resources=managedfusionofferings,verbs=get;list;watch;create;update;patch;delete
@@ -117,48 +167,6 @@ func (r *ManagedFusionOfferingReconciler) Reconcile(ctx context.Context, req ctr
 	}
 
 	return ctrl.Result{}, nil
-}
-
-// SetupWithManager sets up the controller with the Manager.
-func (r *ManagedFusionOfferingReconciler) SetupWithManager(mgr ctrl.Manager) error {
-	managedFusionOfferingPredicates := builder.WithPredicates(
-		predicate.GenerationChangedPredicate{},
-	)
-	csvPredicates := builder.WithPredicates(
-		predicate.NewPredicateFuncs(
-			func(client client.Object) bool {
-				return strings.HasPrefix(client.GetName(), ocsOperatorName)
-			},
-		),
-	)
-	configMapPredicates := builder.WithPredicates(
-		predicate.NewPredicateFuncs(
-			func(client client.Object) bool {
-				name := client.GetName()
-				return name == rookConfigMapName
-			},
-		),
-	)
-	return ctrl.NewControllerManagedBy(mgr).
-		For(&v1alpha1.ManagedFusionOffering{}, managedFusionOfferingPredicates).
-		Owns(&opv1a1.CatalogSource{}).
-		Owns(&opv1a1.Subscription{}).
-		Owns(&ocsv1.StorageCluster{}).
-		Watches(
-			&source.Kind{Type: &opv1a1.ClusterServiceVersion{}},
-			&handler.EnqueueRequestForObject{},
-			csvPredicates,
-		).
-		Watches(
-			&source.Kind{Type: &corev1.ConfigMap{}},
-			&handler.EnqueueRequestForObject{},
-			configMapPredicates,
-		).
-		Watches(
-			&source.Kind{Type: &ocsv1.OCSInitialization{}},
-			&handler.EnqueueRequestForObject{},
-		).
-		Complete(r)
 }
 
 func (r *ManagedFusionOfferingReconciler) reconcileODF() error {
@@ -393,10 +401,6 @@ func (r *ManagedFusionOfferingReconciler) recocileProviderStorageCluster() error
 		// Prevent downscaling by comparing count from secret and count from storage cluster
 		r.setDeviceSetCount(ds, desiredDeviceSetCount, currDeviceSetCount)
 
-		if err := r.ensureMCGDeployment(sc, false); err != nil {
-			return err
-		}
-
 		r.storageCluster.Spec = sc.Spec
 		return nil
 	})
@@ -455,17 +459,6 @@ func (r *ManagedFusionOfferingReconciler) reconcileOCSInitialization() error {
 	return nil
 }
 
-func (r *ManagedFusionOfferingReconciler) ensureMCGDeployment(storageCluster *ocsv1.StorageCluster, mcgEnable bool) error {
-	// Check and enable MCG in Storage Cluster spec
-	if mcgEnable {
-		r.Log.Info("Enabling Multi Cloud Gateway")
-		storageCluster.Spec.MultiCloudGateway.ReconcileStrategy = "manage"
-	} else if storageCluster.Spec.MultiCloudGateway.ReconcileStrategy == "manage" {
-		r.Log.V(-1).Info("Trying to disable Multi Cloud Gateway, Invalid operation")
-	}
-	return nil
-}
-
 func (r *ManagedFusionOfferingReconciler) setDeviceSetCount(deviceSet *ocsv1.StorageDeviceSet, desiredDeviceSetCount int, currDeviceSetCount int) {
 	r.Log.Info("Setting storage device set count", "Current", currDeviceSetCount, "New", desiredDeviceSetCount)
 	if currDeviceSetCount <= desiredDeviceSetCount {
@@ -474,6 +467,16 @@ func (r *ManagedFusionOfferingReconciler) setDeviceSetCount(deviceSet *ocsv1.Sto
 		r.Log.V(-1).Info("Requested storage device set count will result in downscaling, which is not supported. Skipping")
 		deviceSet.Count = currDeviceSetCount
 	}
+}
+
+func findStorageDeviceSet(storageDeviceSets []ocsv1.StorageDeviceSet, deviceSetName string) *ocsv1.StorageDeviceSet {
+	for index := range storageDeviceSets {
+		item := &storageDeviceSets[index]
+		if item.Name == deviceSetName {
+			return item
+		}
+	}
+	return nil
 }
 
 func (r *ManagedFusionOfferingReconciler) own(resource metav1.Object) error {

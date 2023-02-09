@@ -44,14 +44,33 @@ type ManagedFusionDeploymentSpec struct {
 	Pager PagerSpec `json:"pager,omitempty"`
 }
 
+type ComponentState string
+
+const (
+	ComponentReady    ComponentState = "Ready"
+	ComponentPending  ComponentState = "Pending"
+	ComponentNotFound ComponentState = "NotFound"
+	ComponentUnknown  ComponentState = "Unknown"
+)
+
+type ComponentStatus struct {
+	State ComponentState `json:"state"`
+}
+
+type ComponentStatusMap struct {
+	Prometheus   ComponentStatus `json:"prometheus"`
+	Alertmanager ComponentStatus `json:"alertmanager"`
+}
+
 // ManagedFusionDeploymentStatus defines the observed state of ManagedFusionDeployment
 type ManagedFusionDeploymentStatus struct {
 	// INSERT ADDITIONAL STATUS FIELD - define observed state of cluster
 	// Important: Run "make" to regenerate code after modifying this file
+	Components ComponentStatusMap `json:"components"`
 }
 
-//+kubebuilder:object:root=true
-//+kubebuilder:subresource:status
+// +kubebuilder:object:root=true
+// +kubebuilder:subresource:status
 
 // ManagedFusionDeployment is the Schema for the managedfusiondeployments API
 type ManagedFusionDeployment struct {

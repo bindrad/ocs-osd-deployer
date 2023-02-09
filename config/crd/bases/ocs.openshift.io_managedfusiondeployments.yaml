@@ -61,6 +61,32 @@ spec:
           status:
             description: ManagedFusionDeploymentStatus defines the observed state
               of ManagedFusionDeployment
+            properties:
+              components:
+                description: 'INSERT ADDITIONAL STATUS FIELD - define observed state
+                  of cluster Important: Run "make" to regenerate code after modifying
+                  this file'
+                properties:
+                  alertmanager:
+                    properties:
+                      state:
+                        type: string
+                    required:
+                    - state
+                    type: object
+                  prometheus:
+                    properties:
+                      state:
+                        type: string
+                    required:
+                    - state
+                    type: object
+                required:
+                - alertmanager
+                - prometheus
+                type: object
+            required:
+            - components
             type: object
         type: object
     served: true

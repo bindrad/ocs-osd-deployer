@@ -28,6 +28,8 @@ import (
 	_ "k8s.io/client-go/plugin/pkg/client/auth/gcp"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/config"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
 	configv1 "github.com/openshift/api/config/v1"
@@ -130,10 +132,12 @@ func main() {
 	// }
 
 	if err = (&controllers.ManagedFusionDeploymentReconciler{
-		Client: mgr.GetClient(),
-		Log:    ctrl.Log.WithName("controllers").WithName("ManagedFusionDeployment"),
-		Scheme: mgr.GetScheme(),
-	}).SetupWithManager(mgr); err != nil {
+		Client:                       mgr.GetClient(),
+		UnrestrictedClient:           getUnrestrictedClient(),
+		Log:                          ctrl.Log.WithName("controllers").WithName("ManagedFusionDeployment"),
+		Scheme:                       mgr.GetScheme(),
+		CustomerNotificationHTMLPath: "templates/customernotification.html",
+	}).SetupWithManager(mgr, nil); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "ManagedFusionDeployment")
 		os.Exit(1)
 	}
@@ -156,18 +160,18 @@ func main() {
 }
 
 // getUnrestrictedClient creates a client required for listing PVCs from all namespaces.
-// func getUnrestrictedClient() client.Client {
-// 	var options client.Options
+func getUnrestrictedClient() client.Client {
+	var options client.Options
 
-// 	options.Scheme = runtime.NewScheme()
-// 	addAllSchemes(options.Scheme)
-// 	k8sClient, err := client.New(config.GetConfigOrDie(), options)
-// 	if err != nil {
-// 		setupLog.Error(err, "error creating client")
-// 		os.Exit(1)
-// 	}
-// 	return k8sClient
-// }
+	options.Scheme = runtime.NewScheme()
+	addAllSchemes(options.Scheme)
+	k8sClient, err := client.New(config.GetConfigOrDie(), options)
+	if err != nil {
+		setupLog.Error(err, "error creating client")
+		os.Exit(1)
+	}
+	return k8sClient
+}
 
 // func mapCRDAvailability(crdNames ...string) map[string]bool {
 

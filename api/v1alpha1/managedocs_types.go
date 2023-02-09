@@ -38,24 +38,24 @@ type ManagedOCSSpec struct {
 	ReconcileStrategy ReconcileStrategy `json:"reconcileStrategy,omitempty"`
 }
 
-type ComponentState string
+// type ComponentState string
 
-const (
-	ComponentReady    ComponentState = "Ready"
-	ComponentPending  ComponentState = "Pending"
-	ComponentNotFound ComponentState = "NotFound"
-	ComponentUnknown  ComponentState = "Unknown"
-)
+// const (
+// 	ComponentReady    ComponentState = "Ready"
+// 	ComponentPending  ComponentState = "Pending"
+// 	ComponentNotFound ComponentState = "NotFound"
+// 	ComponentUnknown  ComponentState = "Unknown"
+// )
 
-type ComponentStatus struct {
-	State ComponentState `json:"state"`
-}
+// type ComponentStatus struct {
+// 	State ComponentState `json:"state"`
+// }
 
-type ComponentStatusMap struct {
-	StorageCluster ComponentStatus `json:"storageCluster"`
-	Prometheus     ComponentStatus `json:"prometheus"`
-	Alertmanager   ComponentStatus `json:"alertmanager"`
-}
+// type ComponentStatusMap struct {
+// 	StorageCluster ComponentStatus `json:"storageCluster"`
+// 	Prometheus     ComponentStatus `json:"prometheus"`
+// 	Alertmanager   ComponentStatus `json:"alertmanager"`
+// }
 
 // ManagedOCSStatus defines the observed state of ManagedOCS
 type ManagedOCSStatus struct {
